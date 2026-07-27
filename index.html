@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ZXDH Cybercab OS - Global Multiplayer</title>
+    
+    <!-- Scripts & Styles -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- MQTT for Zero-Config Realtime Multiplayer -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap');
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+            background-color: #050505; font-family: 'Inter', sans-serif; color: #ffffff;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #map-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; background-color: #000;
+        }
+
+        .leaflet-control-zoom a { background-color: #111 !important; color: #fff !important; border-color: #333 !important; }
+        .leaflet-control-attribution { background-color: rgba(0,0,0,0.5) !important; color: #666 !important; }
+
+        /* Neon Glow Effects */
+        .geofence-glow { filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.8)); }
+        .route-glow { filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.9)); }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10; pointer-events: none; display: flex; flex-direction: column;
+        }
+
+        .interactive { pointer-events: auto; }
+
+        .glass-panel {
+            background: rgba(15, 15, 15, 0.85); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .glass-panel-solid { background: rgba(10, 10, 10, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); }
+
+        #rgb-border {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 20;
+            border: 4px solid transparent;
+            border-image: linear-gradient(to bottom right, #b827fc 0%, #2c90fc 25%, #b8fd33 50%, #fec837 75%, #fd1892 100%);
+            border-image-slice: 1;
+            animation: rgbShift 3s linear infinite; opacity: 0; transition: opacity 1s ease;
+        }
+        #rgb-border.active { opacity: 1; }
+        @keyframes rgbShift { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }
+
+        .fade-enter { opacity: 0; transform: translateY(10px); transition: all 0.4s ease; }
+        .fade-enter-active { opacity: 1; transform: translateY(0); }
+        .fade-exit { opacity: 1; transition: all 0.3s ease; }
+        .fade-exit-active { opacity: 0; pointer-events: none; visibility: hidden; }
+
+        .screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; }
+
+        input:focus, select:focus { outline: none; border-color: #fff; }
+        input[type="checkbox"] { accent-color: #ffffff; width: 16px; height: 16px; cursor: pointer; }
+        
+        select { appearance: none; background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E"); background-repeat: no-repeat; background-position: right .7em top 50%; background-size: .65em auto; }
+
+        /* Pins and Markers */
+        .map-pin {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -100%);
+            z-index: 5; pointer-events: none; display: none; flex-direction: column; align-items: center;
+        }
+        .pin-label {
+            background: #fff; color: #000; padding: 4px 12px; border-radius: 20px;
+            font-size: 12px; font-weight: bold; margin-bottom: 5px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); white-space: nowrap;
+        }
+        .pin-icon { font-size: 28px; color: #ffffff; text-shadow: 0 4px 10px rgba(0,0,0,0.8); }
+        .pulse { animation: pulseAnim 2s infinite; }
+        @keyframes pulseAnim { 0%, 100% { transform: translate(-50%, -100%) scale(1); } 50% { transform: translate(-50%, -100%) scale(1.1); } }
+
+        .car-marker {
+            width: 24px; height: 40px; background: linear-gradient(180deg, #dddddd 0%, #aaaaaa 100%);
+            border-radius: 4px; border: 2px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.8);
+            position: relative; transition: transform 0.1s linear;
+        }
+        .car-marker::after { content: ''; position: absolute; top: 10px; left: 2px; right: 2px; bottom: 10px; background: #111; border-radius: 2px; }
+        .car-marker::before {
+            content: ''; position: absolute; top: -2px; left: 4px; right: 4px; height: 4px;
+            background: #fff; box-shadow: 0 -4px 15px rgba(255,255,255,0.8); border-radius: 2px;
+        }
+
+        /* MULTIPLAYER STYLES */
+        .leaflet-marker-icon.multiplayer-icon-wrapper { transition: transform 1.2s linear; }
+        .multiplayer-car { border: 2px solid #4ade80; background: linear-gradient(180deg, #1f2937 0%, #111827 100%); box-shadow: 0 0 15px rgba(74, 222, 128, 0.5); }
+        .multiplayer-car::before { background: #4ade80; box-shadow: 0 -4px 15px rgba(74, 222, 128, 0.8); }
+        .multiplayer-name {
+            position: absolute; top: -28px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.9);
+            color: #4ade80; padding: 3px 8px; border-radius: 6px; font-size: 11px; white-space: nowrap;
+            border: 1px solid rgba(74, 222, 128, 0.3); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="rgb-border"></div>
+    <div id="map-container"></div>
+    
+    <div id="target-pin" class="map-pin pulse">
+        <div id="pin-text" class="pin-label">Definir Partida</div>
+        <i class="fa-solid fa-location-crosshairs pin-icon"></i>
+    </div>
+
+    <div id="ui-layer">
+        
+        <!-- Auth Screen -->
+        <div id="auth-screen" class="screen interactive fade-enter fade-enter-active bg-black/80 flex items-center justify-center p-4 z-50">
+            <div class="glass-panel-solid rounded-3xl p-8 w-full max-w-sm flex flex-col items-center">
+                <div class="w-16 h-16 bg-white text-black rounded-2xl flex items-center justify-center text-xl font-black mb-6 shadow-[0_0_20px_rgba(255,255,255,0.2)]">
+                    ZXDH
+                </div>
+                <h1 class="text-3xl font-bold mb-1 text-center">Cybercab</h1>
+                <p class="text-gray-400 text-center mb-6 text-xs font-medium tracking-widest uppercase">Global Robotaxi Network</p>
+
+                <div class="w-full space-y-4">
+                    <input type="text" id="username-input" placeholder="Seu Nome (ex: Leandro)" class="w-full bg-[#111] border border-gray-800 rounded-xl px-4 py-4 text-white text-sm transition-all focus:border-white">
+                    
+                    <div class="relative">
+                        <select id="city-select" class="w-full bg-[#111] border border-gray-800 rounded-xl px-4 py-4 text-white text-sm transition-all focus:border-white">
+                            <option value="" disabled selected>Selecione a Região Ativa...</option>
+                            <option value="sao_paulo">São Paulo, BR</option>
+                            <option value="miami">Miami, FL</option>
+                            <option value="austin">Austin, TX</option>
+                            <option value="starbase">Starbase, TX</option>
+                            <option value="amsterdam">Amsterdã, NL</option>
+                            <option value="los_angeles">Los Angeles, CA</option>
+                            <option value="paris">Paris, FR</option>
+                        </select>
+                    </div>
+                    <p class="text-center text-[10px] text-gray-500 font-bold uppercase tracking-wider mt-1">Mais cidades em breve</p>
+                    
+                    <div class="flex items-start space-x-3 px-1 mt-4">
+                        <input type="checkbox" id="terms-checkbox" class="mt-1">
+                        <label for="terms-checkbox" class="text-xs text-gray-400 leading-tight">
+                            Concordo com os <button id="btn-show-terms" class="text-white underline">Termos</button>.
+                        </label>
+                    </div>
+                    
+                    <button id="login-btn" class="w-full bg-white text-black font-bold rounded-xl px-4 py-4 transition-colors opacity-50 cursor-not-allowed" disabled>
+                        Acessar Rede Global
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Terms Modal -->
+        <div id="terms-modal" class="absolute inset-0 z-[60] bg-black/90 hidden interactive flex items-center justify-center p-4">
+            <div class="glass-panel-solid rounded-2xl p-6 w-full max-w-md flex flex-col">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-bold">Termos de Uso ZXDH</h2>
+                    <button id="close-terms-btn" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+                <div class="text-sm text-gray-400 space-y-4 mb-4">
+                    <p>1. <strong>Mundo Real:</strong> Sistema conectado ao trânsito e ruas de verdade.</p>
+                    <p>2. <strong>Multiplayer:</strong> O modo online exibe o carro de outros usuários da rede ZXDH ao vivo no seu mapa.</p>
+                    <p>3. <strong>Área de Cobertura:</strong> O Cybercab só pode operar dentro da área de segurança marcada (borda branca).</p>
+                </div>
+                <button id="accept-terms-btn" class="w-full bg-white text-black font-bold rounded-xl px-4 py-3 hover:bg-gray-200">Concordo</button>
+            </div>
+        </div>
+
+        <!-- Main Screen -->
+        <div id="main-screen" class="screen fade-exit fade-exit-active justify-between p-4 sm:p-6 pb-8">
+            <div class="flex justify-between items-start w-full">
+                <div class="glass-panel interactive rounded-full px-4 py-2 flex items-center space-x-2">
+                    <div id="satellite-indicator" class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span id="satellite-text" class="text-xs font-bold tracking-wider">OFFLINE</span>
+                </div>
+                <div class="glass-panel interactive rounded-full px-4 py-2 flex items-center space-x-2">
+                    <i class="fa-solid fa-user text-xs"></i>
+                    <span id="user-display" class="text-xs font-bold">User</span>
+                </div>
+            </div>
+
+            <div class="w-full max-w-md mx-auto interactive mt-auto">
+                <div class="glass-panel rounded-3xl p-5 sm:p-6 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h2 id="action-title" class="text-xl font-black">Onde você está?</h2>
+                            <p id="action-subtitle" class="text-gray-400 text-xs mt-1">Arraste o mapa para definir a Partida.</p>
+                        </div>
+                        <div class="flex flex-col items-end space-y-1">
+                            <div id="eta-badge" class="hidden bg-white text-black px-3 py-1 rounded-lg text-xs font-bold flex items-center space-x-1">
+                                <i class="fa-solid fa-clock"></i> <span id="eta-time">Calculando...</span>
+                            </div>
+                            <div id="price-badge" class="hidden bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-1 rounded-lg text-xs font-bold flex items-center space-x-1">
+                                <i class="fa-solid fa-dollar-sign"></i> $<span id="price-text">0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="primary-action-btn" class="w-full bg-white text-black font-bold rounded-xl px-4 py-4 transition-all flex justify-between items-center group shadow-xl">
+                        <span id="primary-action-text">Confirmar Partida</span>
+                        <div class="w-8 h-8 rounded-full bg-black/10 flex items-center justify-center group-hover:translate-x-1 transition-transform">
+                            <i class="fa-solid fa-arrow-right"></i>
+                        </div>
+                    </button>
+                    <div id="coverage-warning" class="text-red-400 text-xs font-bold text-center mt-3 hidden">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Fora da área de cobertura ZXDH
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cabin Screen -->
+        <div id="cabin-screen" class="screen fade-exit fade-exit-active justify-end p-4 pb-8 bg-gradient-to-t from-black via-black/50 to-transparent">
+            <div class="w-full max-w-2xl mx-auto interactive">
+                <div class="glass-panel-solid rounded-3xl p-6 border-t-4 border-white/20 shadow-[0_-20px_50px_rgba(0,0,0,0.9)]">
+                    <div class="flex justify-between items-center border-b border-gray-800 pb-4 mb-4">
+                        <div>
+                            <h2 class="text-2xl font-black tracking-tight">Em Viagem</h2>
+                            <p class="text-gray-400 text-sm mt-1">Aproveite a experiência global ZXDH.</p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-xs text-gray-500 font-bold tracking-wider mb-1">DESTINO</div>
+                            <div id="cabin-destination-text" class="text-sm font-medium bg-gray-900 px-3 py-1 rounded-lg">Em Rota...</div>
+                            <div id="cabin-price-text" class="text-sm font-bold text-green-400 mt-1 hidden">Fatura: $0.00</div>
+                        </div>
+                    </div>
+
+                    <div class="w-full">
+                        <label class="block text-xs text-gray-500 font-bold mb-3 tracking-wider flex justify-between items-center">
+                            <span>SISTEMA DE ÁUDIO DA CABINE (30s)</span>
+                            <i class="fa-brands fa-apple text-lg text-gray-400"></i>
+                        </label>
+                        <div class="flex space-x-2 mb-4">
+                            <input type="text" id="song-search-input" placeholder="Buscar música ou artista..." class="flex-1 bg-[#111] border border-gray-800 rounded-xl px-4 py-3 text-sm text-white transition-all focus:border-white">
+                            <button id="search-song-btn" class="bg-white text-black rounded-xl px-5 py-3 hover:bg-gray-200 transition font-bold">
+                                <i class="fa-solid fa-search"></i>
+                            </button>
+                        </div>
+                        <div id="music-status-msg" class="text-xs text-red-400 hidden mb-2 font-medium">Música não encontrada.</div>
+                        
+                        <div id="music-player-ui" class="hidden bg-[#111] rounded-2xl p-3 flex items-center space-x-4 border border-gray-800 shadow-inner">
+                            <img id="album-art" src="https://placehold.co/100x100/111/333?text=Art" class="w-14 h-14 rounded-xl object-cover shadow-md" alt="Album">
+                            <div class="flex-1 overflow-hidden">
+                                <div id="song-title" class="text-sm font-bold truncate text-white">Faixa</div>
+                                <div id="song-artist" class="text-xs text-gray-400 truncate">Artista</div>
+                            </div>
+                            <button id="play-pause-btn" class="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition shadow-lg">
+                                <i class="fa-solid fa-play ml-1"></i>
+                            </button>
+                        </div>
+                        <audio id="audio-element"></audio>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Geofencing Data - The allowed service areas
+        const GEO_CITIES = {
+            'sao_paulo': { name: 'São Paulo', lat: -23.5505, lng: -46.6333, radius: 8000 },
+            'miami': { name: 'Miami', lat: 25.7617, lng: -80.1918, radius: 10000 },
+            'austin': { name: 'Austin', lat: 30.2672, lng: -97.7431, radius: 8000 },
+            'starbase': { name: 'Starbase, TX', lat: 25.9972, lng: -97.1561, radius: 3000 }, // SpaceX area
+            'amsterdam': { name: 'Amsterdã', lat: 52.3676, lng: 4.9041, radius: 6000 },
+            'los_angeles': { name: 'Los Angeles', lat: 34.0522, lng: -118.2437, radius: 15000 },
+            'paris': { name: 'Paris', lat: 48.8566, lng: 2.3522, radius: 8000 }
+        };
+
+        const STATES = { AUTH: 0, SET_PICKUP: 1, WAITING_CAR: 2, BOARDING: 3, SET_DESTINATION: 4, RIDING: 5 };
+        let currentState = STATES.AUTH;
+        
+        const appData = { username: '', cityKey: '', pickupLatLng: null, destLatLng: null, carLatLng: null, audioPlaying: false };
+        let activeMultiplayerCars = {}; // Store network players
+        let lastCarUpdateTimes = {}; // For cleanup
+
+        // DOM Elements
+        const termsCheckbox = document.getElementById('terms-checkbox');
+        const loginBtn = document.getElementById('login-btn');
+        const usernameInput = document.getElementById('username-input');
+        const citySelect = document.getElementById('city-select');
+        const termsModal = document.getElementById('terms-modal');
+        const coverageWarning = document.getElementById('coverage-warning');
+        
+        const screens = { auth: document.getElementById('auth-screen'), main: document.getElementById('main-screen'), cabin: document.getElementById('cabin-screen') };
+        
+        const ui = {
+            title: document.getElementById('action-title'), sub: document.getElementById('action-subtitle'),
+            btn: document.getElementById('primary-action-btn'), btnText: document.getElementById('primary-action-text'),
+            pin: document.getElementById('target-pin'), pinText: document.getElementById('pin-text'),
+            user: document.getElementById('user-display'), eta: document.getElementById('eta-badge'),
+            etaTime: document.getElementById('eta-time'), price: document.getElementById('price-badge'),
+            priceText: document.getElementById('price-text'), cabinPrice: document.getElementById('cabin-price-text'),
+            cabinDest: document.getElementById('cabin-destination-text'), rgb: document.getElementById('rgb-border'),
+            satInd: document.getElementById('satellite-indicator'), satText: document.getElementById('satellite-text')
+        };
+
+        let map, mainCarMarker, routePolyline, geofenceCircle;
+        
+        // MQTT Client Setup (Zero Config Multiplayer)
+        let mqttClient = null;
+        const myClientId = 'zxdh_' + Math.random().toString(16).substr(2, 8);
+        const MQTT_TOPIC = 'zxdh/cybercab/world/live';
+
+        // Event Listeners
+        document.getElementById('btn-show-terms').addEventListener('click', (e) => { e.preventDefault(); termsModal.classList.remove('hidden'); });
+        document.getElementById('close-terms-btn').addEventListener('click', () => termsModal.classList.add('hidden'));
+        document.getElementById('accept-terms-btn').addEventListener('click', () => { termsCheckbox.checked = true; termsModal.classList.add('hidden'); validateLogin(); });
+        
+        [termsCheckbox, usernameInput, citySelect].forEach(el => el.addEventListener('change', validateLogin));
+        usernameInput.addEventListener('input', validateLogin);
+
+        function validateLogin() {
+            if (termsCheckbox.checked && usernameInput.value.trim().length > 1 && citySelect.value !== "") {
+                loginBtn.disabled = false; loginBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                loginBtn.classList.add('hover:bg-gray-200');
+            } else {
+                loginBtn.disabled = true; loginBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                loginBtn.classList.remove('hover:bg-gray-200');
+            }
+        }
+
+        loginBtn.addEventListener('click', () => {
+            appData.username = usernameInput.value.trim();
+            appData.cityKey = citySelect.value;
+            ui.user.textContent = appData.username;
+            loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Conectando à Rede Global...';
+            
+            // Connect to Free Public MQTT for instant multiplayer
+            try {
+                mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+                mqttClient.on('connect', () => {
+                    mqttClient.subscribe(MQTT_TOPIC);
+                    ui.satInd.classList.replace('bg-red-500', 'bg-green-500');
+                    ui.satInd.classList.add('pulse');
+                    ui.satText.textContent = "ONLINE - MULTIPLAYER";
+                });
+                mqttClient.on('message', handleMultiplayerMessage);
+            } catch (err) { console.error("MQTT Error:", err); }
+
+            switchScreen(screens.auth, screens.main);
+            initMap(GEO_CITIES[appData.cityKey]); 
+            setTimeout(() => { map.invalidateSize(); }, 400); 
+            setState(STATES.SET_PICKUP);
+            
+            // Cleanup stale cars every 3 seconds
+            setInterval(cleanupStaleCars, 3000);
+        });
+
+        function handleMultiplayerMessage(topic, message) {
+            try {
+                const data = JSON.parse(message.toString());
+                if (data.id === myClientId || data.city !== appData.cityKey) return; // Ignore self and other cities
+
+                const uid = data.id;
+                lastCarUpdateTimes[uid] = Date.now();
+
+                if (!activeMultiplayerCars[uid]) {
+                    const icon = L.divIcon({
+                        className: 'multiplayer-icon-wrapper',
+                        html: `<div class="car-marker multiplayer-car"><div class="multiplayer-name">${data.name}</div></div>`,
+                        iconSize: [24, 40], iconAnchor: [12, 20]
+                    });
+                    activeMultiplayerCars[uid] = L.marker([data.lat, data.lng], {icon, zIndexOffset: 800}).addTo(map);
+                } else {
+                    activeMultiplayerCars[uid].setLatLng([data.lat, data.lng]);
+                }
+                
+                const el = activeMultiplayerCars[uid].getElement();
+                if (el && el.firstChild) el.firstChild.style.transform = `rotate(${data.angle}deg)`;
+            } catch (e) {}
+        }
+
+        function cleanupStaleCars() {
+            const now = Date.now();
+            for (const uid in lastCarUpdateTimes) {
+                // If a car hasn't updated in 10 seconds, remove it (they disconnected)
+                if (now - lastCarUpdateTimes[uid] > 10000) {
+                    if (activeMultiplayerCars[uid]) map.removeLayer(activeMultiplayerCars[uid]);
+                    delete activeMultiplayerCars[uid];
+                    delete lastCarUpdateTimes[uid];
+                }
+            }
+        }
+
+        let lastSyncTime = 0;
+        function syncMyPositionToNetwork(lat, lng, angle) {
+            if (!mqttClient || !mqttClient.connected) return;
+            const now = Date.now();
+            if (now - lastSyncTime < 500) return; // Max 2 updates per sec
+            lastSyncTime = now;
+
+            const payload = JSON.stringify({ id: myClientId, name: appData.username, city: appData.cityKey, lat: lat, lng: lng, angle: angle });
+            mqttClient.publish(MQTT_TOPIC, payload);
+        }
+
+        function initMap(cityData) {
+            map = L.map('map-container', { zoomControl: false, attributionControl: false }).setView([cityData.lat, cityData.lng], 14);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+
+            // Draw Geofence Area
+            geofenceCircle = L.circle([cityData.lat, cityData.lng], {
+                radius: cityData.radius, color: '#ffffff', weight: 2, fillOpacity: 0.02, className: 'geofence-glow', interactive: false
+            }).addTo(map);
+
+            const carIcon = L.divIcon({
+                className: 'custom-car-icon', html: '<div class="car-marker" id="main-car-visual"></div>',
+                iconSize: [24, 40], iconAnchor: [12, 20] 
+            });
+
+            // Spawn car near the edge of the screen initially
+            appData.carLatLng = L.latLng(cityData.lat + 0.01, cityData.lng - 0.01);
+            mainCarMarker = L.marker(appData.carLatLng, {icon: carIcon, zIndexOffset: 1000}).addTo(map);
+            mainCarMarker.setOpacity(0); 
+            
+            map.on('movestart', () => { if(currentState === STATES.SET_PICKUP || currentState === STATES.SET_DESTINATION) ui.pin.classList.add('pulse'); });
+            
+            map.on('move', () => {
+                const center = map.getCenter();
+                // Check Geofence
+                const distToCenter = center.distanceTo([cityData.lat, cityData.lng]);
+                if (distToCenter > cityData.radius) {
+                    ui.btn.disabled = true; ui.btn.classList.add('opacity-50', 'bg-red-500'); ui.btn.classList.remove('bg-white', 'text-black');
+                    ui.btn.classList.add('text-white'); coverageWarning.classList.remove('hidden');
+                } else {
+                    if (currentState === STATES.SET_PICKUP || currentState === STATES.SET_DESTINATION) {
+                        ui.btn.disabled = false; ui.btn.classList.remove('opacity-50', 'bg-red-500', 'text-white');
+                        ui.btn.classList.add('bg-white', 'text-black'); coverageWarning.classList.add('hidden');
+                    }
+                }
+
+                if (currentState === STATES.SET_DESTINATION && appData.pickupLatLng && distToCenter <= cityData.radius) {
+                    const dist = appData.pickupLatLng.distanceTo(center);
+                    const price = 5 + (dist / 1000) * 1.5; 
+                    ui.priceText.textContent = price.toFixed(2);
+                }
+            });
+            map.on('moveend', () => { ui.pin.classList.remove('pulse'); });
+        }
+
+        async function fetchRoute(start, end) {
+            const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.routes && data.routes.length > 0) return data.routes[0];
+            } catch (e) {}
+            return { geometry: { coordinates: [[start.lng, start.lat], [end.lng, end.lat]] }, distance: start.distanceTo(end) };
+        }
+
+        function drawRoute(coords) {
+            if (routePolyline) map.removeLayer(routePolyline);
+            routePolyline = L.polyline(coords.map(c => [c[1], c[0]]), { color: '#3b82f6', weight: 6, opacity: 0.9, lineCap: 'round', className: 'route-glow pulse' }).addTo(map);
+            map.fitBounds(routePolyline.getBounds(), {padding: [50, 50]});
+        }
+
+        let animationFrameId;
+        function animateCarAlongRoute(geoJsonCoords, onComplete) {
+            if(animationFrameId) cancelAnimationFrame(animationFrameId);
+            const points = geoJsonCoords.map(c => L.latLng(c[1], c[0]));
+            if (points.length < 2) { if(onComplete) onComplete(); return; }
+
+            let currentSegment = 0, progress = 0, distCovered = 0;
+            const speedMetersPerFrame = 0.15; // Velocidade mais realista e elegante
+            mainCarMarker.setOpacity(1); 
+
+            let totalDist = 0;
+            for(let i=0; i<points.length-1; i++) totalDist += points[i].distanceTo(points[i+1]);
+
+            function step() {
+                if (currentSegment >= points.length - 1) { if(onComplete) onComplete(); return; }
+
+                const p1 = points[currentSegment], p2 = points[currentSegment + 1];
+                const segDist = p1.distanceTo(p2);
+                let stepSize = segDist > 0 ? (speedMetersPerFrame / segDist) : 1;
+                progress += stepSize;
+
+                if (progress >= 1) { distCovered += segDist; progress = 0; currentSegment++; requestAnimationFrame(step); return; }
+
+                const lat = p1.lat + (p2.lat - p1.lat) * progress;
+                const lng = p1.lng + (p2.lng - p1.lng) * progress;
+                const angle = Math.atan2(p2.lng - p1.lng, p2.lat - p1.lat) * 180 / Math.PI;
+
+                mainCarMarker.setLatLng([lat, lng]); appData.carLatLng = L.latLng(lat, lng);
+                const el = document.getElementById('main-car-visual');
+                if (el) el.style.transform = `rotate(${angle}deg)`;
+
+                syncMyPositionToNetwork(lat, lng, angle); // Manda pro mundo!
+
+                if (currentState === STATES.WAITING_CAR || currentState === STATES.RIDING) {
+                    const remainingDist = totalDist - (distCovered + (segDist * progress));
+                    const secsRemaining = Math.max(0, Math.floor(remainingDist / (speedMetersPerFrame * 60))); 
+                    if (secsRemaining > 60) ui.etaTime.textContent = `${Math.floor(secsRemaining/60)}m ${secsRemaining%60}s`;
+                    else ui.etaTime.textContent = `${secsRemaining}s`;
+                }
+
+                if (currentState === STATES.WAITING_CAR || currentState === STATES.RIDING) map.panTo([lat, lng], {animate: false});
+                animationFrameId = requestAnimationFrame(step);
+            }
+            step();
+        }
+
+        ui.btn.addEventListener('click', async () => {
+            if (currentState === STATES.SET_PICKUP) {
+                appData.pickupLatLng = map.getCenter();
+                setState(STATES.WAITING_CAR);
+                const route = await fetchRoute(appData.carLatLng, appData.pickupLatLng);
+                drawRoute(route.geometry.coordinates);
+                animateCarAlongRoute(route.geometry.coordinates, () => { setState(STATES.BOARDING); if(routePolyline) map.removeLayer(routePolyline); });
+            } 
+            else if (currentState === STATES.BOARDING) setState(STATES.SET_DESTINATION);
+            else if (currentState === STATES.SET_DESTINATION) {
+                appData.destLatLng = map.getCenter();
+                setState(STATES.RIDING);
+                const route = await fetchRoute(appData.pickupLatLng, appData.destLatLng);
+                drawRoute(route.geometry.coordinates);
+                animateCarAlongRoute(route.geometry.coordinates, () => {
+                    setTimeout(() => {
+                        setState(STATES.SET_PICKUP); switchScreen(screens.cabin, screens.main);
+                        ui.rgb.classList.remove('active'); document.getElementById('audio-element').pause();
+                        if(routePolyline) map.removeLayer(routePolyline);
+                    }, 4000); 
+                });
+            }
+        });
+
+        function switchScreen(hideEl, showEl) {
+            hideEl.classList.remove('fade-enter-active'); hideEl.classList.add('fade-exit-active');
+            setTimeout(() => {
+                hideEl.classList.remove('fade-exit'); hideEl.classList.add('hidden');
+                showEl.classList.remove('hidden', 'fade-exit-active'); showEl.classList.add('fade-enter');
+                void showEl.offsetWidth; showEl.classList.add('fade-enter-active');
+            }, 300);
+        }
+
+        function setState(newState) {
+            currentState = newState;
+            ui.btn.className = "w-full bg-white text-black font-bold rounded-xl px-4 py-4 transition-all flex justify-between items-center group shadow-xl";
+            ui.btn.disabled = false; ui.pin.style.display = 'flex'; ui.eta.classList.add('hidden'); ui.price.classList.add('hidden');
+            coverageWarning.classList.add('hidden'); if(map) map.dragging.enable();
+
+            switch(newState) {
+                case STATES.SET_PICKUP:
+                    ui.title.textContent = "Onde você está?"; ui.sub.textContent = "Arraste o mapa para definir a Partida.";
+                    ui.btnText.textContent = "Confirmar Partida"; ui.pinText.textContent = "Partida";
+                    ui.pin.querySelector('i').className = "fa-solid fa-location-crosshairs pin-icon";
+                    break;
+                case STATES.WAITING_CAR:
+                    ui.title.textContent = "Buscando você..."; ui.sub.textContent = "O Cybercab está a caminho.";
+                    ui.btnText.innerHTML = 'Aguarde <i class="fa-solid fa-circle-notch fa-spin"></i>';
+                    ui.btn.classList.replace('bg-white', 'bg-gray-800'); ui.btn.classList.replace('text-black', 'text-white');
+                    ui.btn.disabled = true; ui.pin.style.display = 'none'; ui.eta.classList.remove('hidden'); map.dragging.disable();
+                    break;
+                case STATES.BOARDING:
+                    ui.title.textContent = "Cybercab Chegou"; ui.sub.textContent = "Seu veículo autônomo está aguardando.";
+                    ui.btnText.textContent = "Entrar no Veículo"; ui.btn.classList.replace('bg-white', 'bg-blue-600');
+                    ui.btn.classList.replace('text-black', 'text-white'); ui.pin.style.display = 'none';
+                    break;
+                case STATES.SET_DESTINATION:
+                    ui.title.textContent = "Para onde?"; ui.sub.textContent = "Defina o destino final.";
+                    ui.btnText.textContent = "Confirmar Destino"; ui.pinText.textContent = "Destino";
+                    ui.pin.querySelector('i').className = "fa-solid fa-flag-checkered pin-icon text-black bg-white rounded-full p-1";
+                    ui.price.classList.remove('hidden'); map.setView(appData.carLatLng, 15);
+                    
+                    const distToCenter = map.getCenter().distanceTo([GEO_CITIES[appData.cityKey].lat, GEO_CITIES[appData.cityKey].lng]);
+                    if (distToCenter <= GEO_CITIES[appData.cityKey].radius) {
+                        const dist = appData.pickupLatLng.distanceTo(map.getCenter());
+                        ui.priceText.textContent = (5 + (dist / 1000) * 1.5).toFixed(2);
+                    }
+                    break;
+                case STATES.RIDING:
+                    switchScreen(screens.main, screens.cabin); ui.pin.style.display = 'none'; ui.rgb.classList.add('active');
+                    ui.cabinDest.textContent = `Em trânsito...`; ui.cabinPrice.textContent = `Fatura: $${ui.priceText.textContent}`;
+                    ui.cabinPrice.classList.remove('hidden'); map.dragging.disable();
+                    break;
+            }
+        }
+
+        const songSearchInput = document.getElementById('song-search-input');
+        const searchSongBtn = document.getElementById('search-song-btn');
+        const audioElement = document.getElementById('audio-element');
+        const playPauseBtn = document.getElementById('play-pause-btn');
+
+        searchSongBtn.addEventListener('click', searchSong);
+        songSearchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') searchSong(); });
+
+        async function searchSong() {
+            if (!songSearchInput.value.trim()) return;
+            searchSongBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            document.getElementById('music-status-msg').classList.add('hidden');
+            try {
+                const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(songSearchInput.value)}&media=music&entity=song&limit=1`);
+                const data = await res.json();
+                if (data.results && data.results.length > 0) {
+                    const track = data.results[0];
+                    document.getElementById('music-player-ui').classList.remove('hidden');
+                    document.getElementById('song-title').textContent = track.trackName;
+                    document.getElementById('song-artist').textContent = track.artistName;
+                    document.getElementById('album-art').src = track.artworkUrl100 || track.artworkUrl60;
+                    audioElement.src = track.previewUrl;
+                    appData.audioPlaying = false; updatePlayBtn();
+                } else document.getElementById('music-status-msg').classList.remove('hidden');
+            } catch (err) { document.getElementById('music-status-msg').classList.remove('hidden'); } 
+            finally { searchSongBtn.innerHTML = '<i class="fa-solid fa-search"></i>'; }
+        }
+
+        playPauseBtn.addEventListener('click', () => {
+            if (!audioElement.src) return;
+            appData.audioPlaying ? audioElement.pause() : audioElement.play();
+            appData.audioPlaying = !appData.audioPlaying; updatePlayBtn();
+        });
+        audioElement.addEventListener('ended', () => { appData.audioPlaying = false; updatePlayBtn(); });
+        function updatePlayBtn() { playPauseBtn.innerHTML = appData.audioPlaying ? '<i class="fa-solid fa-pause ml-0"></i>' : '<i class="fa-solid fa-play ml-1"></i>'; }
+    </script>
+</body>
+</html>
